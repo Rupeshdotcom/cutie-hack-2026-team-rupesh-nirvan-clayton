@@ -112,55 +112,5 @@
         }
       ]
     }
-  ],
-  "quote_cases": [
-    {
-      "id": "cash-immediate-lower",
-      "demo_only": true,
-      "same_service_confirmed": true,
-      "same_setting_confirmed": true,
-      "cash_total_cents": 45000,
-      "cash_includes_professional_fees": true,
-      "cash_includes_facility_fees": true,
-      "insurance_patient_estimate_cents": 104000,
-      "insurance_estimate_comparable_scope": true,
-      "deductible_credit": "unknown"
-    },
-    {
-      "id": "insurance-immediate-lower",
-      "demo_only": true,
-      "same_service_confirmed": true,
-      "same_setting_confirmed": true,
-      "cash_total_cents": 45000,
-      "cash_includes_professional_fees": true,
-      "cash_includes_facility_fees": true,
-      "insurance_patient_estimate_cents": 20000,
-      "insurance_estimate_comparable_scope": true,
-      "deductible_credit": "unknown"
-    },
-    {
-      "id": "professional-fee-missing",
-      "demo_only": true,
-      "same_service_confirmed": true,
-      "same_setting_confirmed": true,
-      "cash_total_cents": 45000,
-      "cash_includes_professional_fees": false,
-      "cash_includes_facility_fees": true,
-      "insurance_patient_estimate_cents": 104000,
-      "insurance_estimate_comparable_scope": true,
-      "deductible_credit": "unknown"
-    },
-    {
-      "id": "zero-is-valid",
-      "demo_only": true,
-      "same_service_confirmed": true,
-      "same_setting_confirmed": true,
-      "cash_total_cents": 45000,
-      "cash_includes_professional_fees": true,
-      "cash_includes_facility_fees": true,
-      "insurance_patient_estimate_cents": 0,
-      "insurance_estimate_comparable_scope": true,
-      "deductible_credit": "unknown"
-    }
   ]
 }

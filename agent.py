@@ -3,7 +3,8 @@ agent.py - the bounded controller (Pack v2 section C).
 
 Each review cycle, Gemini proposes exactly ONE next action. Code validates it:
   ASK_USER                 -> pause with one new question (never a repeat)
-  RETRIEVE_PUBLIC_GUIDANCE -> allowlisted URL only; Solari retrieval is wired in C3
+  RETRIEVE_PUBLIC_GUIDANCE -> allowlisted URL only; read live with Solari, added as evidence,
+                              then reviewed again in the SAME run (budget is not renewed)
   READY_FOR_DRAFT          -> Generate draft becomes available (user still decides)
   STOP_UNRESOLVED          -> stop, keep what is missing visible, no auto-retry;
                               the user may deliberately request a LIMITED draft
@@ -16,6 +17,7 @@ from pathlib import Path
 import case_model
 import prompts
 from llm import LLMError, ask_gemini
+from public_sources import retrieve_public_page
 
 MAX_CYCLES = 3
 MAX_RETRIEVALS = 2
@@ -30,16 +32,13 @@ UNRESOLVED = "stopped_unresolved"
 FAILED = "review_failed"
 DISCARDED = "discarded"
 
-# One budget per case revision. A new revision (an edit or answer) gets a fresh one;
-# anything found inside a run does NOT renew it.
-_budgets = {}
-
-
 def budget_for(case):
-    key = (id(case), case.case_revision)
-    if key not in _budgets:
-        _budgets[key] = {"cycles": 0, "retrievals": 0, "urls": [], "outcome": None}
-    return _budgets[key]
+    """One budget per case revision, stored on the case. A new revision (an edit or answer)
+    gets a fresh one; evidence retrieved inside a run does NOT renew it."""
+    if not hasattr(case, "budgets"):
+        case.budgets = {}
+    return case.budgets.setdefault(case.case_revision,
+                                   {"cycles": 0, "retrievals": 0, "urls": [], "outcome": None})
 
 
 def normalize(question):
@@ -83,7 +82,21 @@ def check_action(case, budget, action):
 
 
 # ---- One bounded run for the current revision ----
-def run_review(case, ask=ask_gemini, log=print):
+def add_guidance(case, page):
+    """Add a retrieved public page to the case as evidence, with its real URL and time."""
+    number = sum(d["kind"] == "public_guidance" for d in case.documents) + 1
+    case.add_document({
+        "id": f"guidance-{number}",
+        "kind": "public_guidance",
+        "title": f"Public process guidance (live, checked {page['checked_at']}): {page['title']}",
+        "text": page["text"],
+        "url": page["url"],
+        "checked_at": page["checked_at"],
+        "live": True,
+    })
+
+
+def run_review(case, ask=ask_gemini, log=print, retrieve=retrieve_public_page):
     """Review cycles until a valid action ends the run or the budget is reached."""
     budget = budget_for(case)
     if budget["outcome"] and budget["outcome"]["outcome"] != FAILED:
@@ -123,9 +136,18 @@ def run_review(case, ask=ask_gemini, log=print):
             case.asked_questions = getattr(case, "asked_questions", []) + [action["question"]]
             return finish(case, budget, WAITING_FOR_ANSWER, action.get("reason", ""), question=action["question"])
         if kind == "RETRIEVE_PUBLIC_GUIDANCE":
-            budget["urls"].append(action["source_url"])
-            return finish(case, budget, UNRESOLVED, "public guidance lookup not yet wired (checkpoint C3)",
-                          source_url=action["source_url"])
+            url = action["source_url"]
+            budget["urls"].append(url)
+            budget["retrievals"] += 1
+            page = retrieve(url)
+            if not page["ok"]:
+                log(f"Retrieval of {url} unavailable: {page['reason']}")
+                return finish(case, budget, UNRESOLVED, f"public guidance unavailable: {page['reason']}",
+                              source_url=url, checked_at=page["checked_at"])
+            log(f"Retrieved {page['url']} at {page['checked_at']}; reviewing again with it")
+            add_guidance(case, page)  # new revision clears old findings...
+            case.budgets[case.case_revision] = budget  # ...but the run keeps its budget
+            continue
         if kind == "READY_FOR_DRAFT":
             return finish(case, budget, READY, action.get("reason", ""))
         return finish(case, budget, UNRESOLVED, action.get("reason", ""))

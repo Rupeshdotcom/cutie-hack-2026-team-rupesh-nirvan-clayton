@@ -10,7 +10,6 @@ import json
 # Public process pages the reviewer may propose (code checks this list again).
 ALLOWED_SOURCES = [
     "https://www.healthcare.gov/appeal-insurance-company-decision/internal-appeals/",
-    "https://www.cms.gov/marketplace/agents-brokers/files/know-your-rights.pdf",
 ]
 
 # ---- Prompt 2: evidence review + one next action ----
@@ -49,6 +48,7 @@ Rules:
 - An excerpt may omit definitions, exclusions and endorsements. Say when the supplied material cannot establish a conclusion.
 - A denial's description of the policy is the insurer's wording, not policy text.
 - Do not import health-plan rules or deadlines from a different plan type.
+- public_guidance documents describe a general process for a stated plan type; they do not establish this case's coverage, plan type or deadlines.
 - Keep contradictory evidence visible and cite both sides.
 - Exact evidence presence is necessary for provenance, not sufficient for correctness.
 - If a field cannot be found, use null or the appropriate uncertainty state, not a guess.
@@ -79,7 +79,8 @@ Use only supported findings as asserted facts. If the support is user-reported, 
 
 State the insurer's cited reason accurately. Explain the supplied supporting evidence without declaring the denial unlawful or promising reversal. Request reconsideration and clarification where appropriate; do not fabricate a legal argument. No clinical recommendation, made-up study, statute or deadline. Do not include an appeal deadline unless a supplied source establishes it.
 
-Do not claim any document was part of the original submission unless a source says so. Do not manufacture names, claim numbers, signatures or clinician statements; use visible placeholders. Keep a calm factual tone. End draft_text with a short review checklist and the line: Draft for review. Not submitted.
+Do not claim any document was part of the original submission unless a source says so. Do not manufacture names, claim numbers, signatures or clinician statements; use visible placeholders.
+Do not include fields for sensitive identifiers, not even as placeholders: no member ID, policy number, group number, date of birth, address, phone or email. The request number already in the denial (for example DEMO-001) is enough to identify the request. Keep a calm factual tone. End draft_text with a short review checklist and the line: Draft for review. Not submitted.
 """
 
 

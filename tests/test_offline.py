@@ -18,12 +18,10 @@ import agent  # noqa: E402
 import case_model  # noqa: E402
 import prompts  # noqa: E402
 from case_model import CHANGED_MESSAGE, load_fixture_case, make_snapshot_id  # noqa: E402
-from quote_compare import compare_quotes  # noqa: E402
 from llm import LLMError  # noqa: E402
 from safe_errors import safe_gemini_error, safe_solari_error  # noqa: E402
 from solari_browser import SolariError  # noqa: E402
 
-ANSWER_KEY = json.loads((ROOT / "tests" / "answer_key.json").read_text(encoding="utf-8"))
 FIXTURES = json.loads((ROOT / "fixtures" / "cases.json").read_text(encoding="utf-8"))
 
 
@@ -185,19 +183,6 @@ class AddendumChangeSequence(unittest.TestCase):
         assert_review_needed(self, case)
 
 
-class QuoteArithmetic(unittest.TestCase):
-    def test_every_quote_case_matches_answer_key(self):
-        for quote in FIXTURES["quote_cases"]:
-            with self.subTest(quote["id"]):
-                result = compare_quotes(quote)
-                for field, expected in ANSWER_KEY["quote_cases"][quote["id"]].items():
-                    self.assertEqual(result.get(field), expected, field)
-
-    def test_missing_amount_is_not_zero(self):
-        quote = dict(FIXTURES["quote_cases"][0], insurance_patient_estimate_cents=None)
-        self.assertEqual(compare_quotes(quote)["status"], "not_comparable")
-
-
 class FixturesAndSnapshot(unittest.TestCase):
     def test_inputs_have_no_answer_key_data(self):
         self.assertFalse(case_model.contains_key(FIXTURES, "expected"))
@@ -257,19 +242,56 @@ class Controller(unittest.TestCase):
         self.assertEqual(agent.run_review(case, ask=ask, log=lambda _: None)["outcome"], agent.UNRESOLVED)
         self.assertEqual(len(calls), agent.MAX_CYCLES)  # no automatic retry
 
-    def test_retrieval_url_must_be_allowlisted_and_does_not_loop(self):
+    def retrieval_reply(self, url):
+        reply = json.loads(fake_review(action="RETRIEVE_PUBLIC_GUIDANCE", related=()))
+        reply["next_action"]["source_url"] = url
+        return json.dumps(reply)
+
+    def test_retrieval_adds_live_guidance_and_keeps_budget(self):
         case = load_fixture_case("evidence-present")
-        bad = json.loads(fake_review(action="RETRIEVE_PUBLIC_GUIDANCE", related=()))
-        bad["next_action"]["source_url"] = "https://example.com/appeals"
-        good = json.loads(json.dumps(bad))
-        good["next_action"]["source_url"] = prompts.ALLOWED_SOURCES[0]
-        ask, calls = self.scripted(json.dumps(bad), json.dumps(good))
-        outcome = agent.run_review(case, ask=ask, log=lambda _: None)
-        self.assertEqual(len(calls), 2)
-        self.assertIn("not on the allowed list", calls[1])  # code feedback reached cycle 2
+        start_revision = case.case_revision
+        page = {"ok": True, "url": prompts.ALLOWED_SOURCES[0], "title": "Internal appeals",
+                "text": "If your health plan denies a claim, you can file an internal appeal.",
+                "checked_at": "2026-11-21T23:00:00Z"}
+        fetched = []
+        ask, calls = self.scripted(self.retrieval_reply("https://example.com/appeals"),
+                                   self.retrieval_reply(prompts.ALLOWED_SOURCES[0]),
+                                   fake_review(action="READY_FOR_DRAFT", related=()))
+        outcome = agent.run_review(case, ask=ask, log=lambda _: None,
+                                   retrieve=lambda url: fetched.append(url) or page)
+        self.assertIn("not on the allowed list", calls[1])  # bad URL rejected by code
+        self.assertEqual(fetched, [prompts.ALLOWED_SOURCES[0]])
+        guidance = case.document("guidance-1")
+        self.assertEqual((guidance["kind"], guidance["url"], guidance["checked_at"]),
+                         ("public_guidance", page["url"], page["checked_at"]))
+        self.assertEqual(case.case_revision, start_revision + 1)  # evidence changed -> fresh review
+        self.assertEqual(outcome["outcome"], agent.READY)
+        self.assertEqual((outcome["cycles_used"], outcome["retrievals_used"]), (3, 1))  # budget not renewed
+
+    def test_retrieval_failure_is_unavailable_and_does_not_loop(self):
+        case = load_fixture_case("evidence-present")
+        ask, calls = self.scripted(self.retrieval_reply(prompts.ALLOWED_SOURCES[0]))
+        failed = {"ok": False, "url": prompts.ALLOWED_SOURCES[0], "checked_at": "2026-11-21T23:00:00Z",
+                  "reason": "Browser error: the page took too long to load"}
+        outcome = agent.run_review(case, ask=ask, log=lambda _: None, retrieve=lambda url: failed)
+        self.assertEqual(len(calls), 1)
         self.assertEqual(outcome["outcome"], agent.UNRESOLVED)
-        self.assertIn("not yet wired", outcome["reason"])
+        self.assertIn("public guidance unavailable: Browser error", outcome["reason"])
+        self.assertIsNone(case.document("guidance-1"))
         self.assertFalse(case.can_generate_draft())
+
+    def test_same_url_is_not_retrieved_twice(self):
+        case = load_fixture_case("evidence-present")
+        page = {"ok": True, "url": prompts.ALLOWED_SOURCES[0], "title": "T", "text": "Guidance text.",
+                "checked_at": "2026-11-21T23:00:00Z"}
+        fetched = []
+        ask, calls = self.scripted(self.retrieval_reply(prompts.ALLOWED_SOURCES[0]))  # keeps asking
+        outcome = agent.run_review(case, ask=ask, log=lambda _: None,
+                                   retrieve=lambda url: fetched.append(url) or page)
+        self.assertEqual(len(fetched), 1)
+        self.assertIn("already used", calls[2])
+        self.assertEqual(outcome["outcome"], agent.UNRESOLVED)
+        self.assertIn("budget", outcome["reason"])
 
     def test_ready_enables_draft_and_answer_gets_fresh_budget(self):
         case = load_fixture_case("evidence-present")

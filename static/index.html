@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Denial Evidence Review (fictional demo)</title>
+<style>
+  body { font-family: system-ui, sans-serif; max-width: 900px; margin: 0 auto; padding: 16px; line-height: 1.45; color: #1a1a1a; background: #fff; }
+  h1 { font-size: 1.4rem; margin-bottom: 4px; }
+  h2 { font-size: 1.1rem; margin-top: 28px; border-bottom: 1px solid #ccc; padding-bottom: 4px; }
+  .note { color: #555; font-size: 0.9rem; }
+  .fictional { background: #fff3cd; border: 1px solid #e0c46c; padding: 8px 10px; border-radius: 4px; }
+  .changed { color: #8a4b00; font-weight: 600; }
+  label { display: block; font-weight: 600; margin-top: 12px; }
+  select { max-width: 100%; font: inherit; }
+  textarea { width: 100%; box-sizing: border-box; font: inherit; padding: 6px; }
+  button { font: inherit; padding: 6px 12px; margin: 6px 6px 0 0; cursor: pointer; }
+  button:disabled { cursor: not-allowed; opacity: 0.5; }
+  table { width: 100%; border-collapse: collapse; }
+  td { border-top: 1px solid #ddd; padding: 8px 4px; vertical-align: top; }
+  .status { font-weight: 700; text-transform: uppercase; white-space: nowrap; padding: 2px 6px; border-radius: 3px; font-size: 0.85rem; }
+  .supported { background: #d7f0dc; } .missing { background: #fde2e1; }
+  .contradictory { background: #fde9c8; } .not_established { background: #e8e8e8; }
+  .passage { background: #f6f6f6; border-left: 3px solid #999; padding: 6px 8px; margin-top: 6px; font-size: 0.9rem; }
+  .banner { background: #222; color: #fff; padding: 8px 10px; font-weight: 700; border-radius: 4px; }
+  .hidden { display: none; }
+</style>
+</head>
+<body>
+<h1>Denial Evidence Review</h1>
+<p class="fictional"><strong>Fictional demo.</strong> All cases, people, policies and documents are made up. This is not medical, legal or coverage advice, and nothing is ever sent or filed.</p>
+
+<!-- 1. Case picker -->
+<h2>1. Pick a fictional case</h2>
+<select id="case-picker"></select>
+<button id="load-btn">Load case</button>
+
+<!-- 2. Editable documents -->
+<h2>2. Documents</h2>
+<p id="changed" class="changed hidden"></p>
+<div id="documents"><p class="note">Load a case to see its documents.</p></div>
+
+<!-- 3. Review -->
+<h2>3. Review</h2>
+<button id="review-btn" disabled>Run review</button>
+<p id="status" class="note">No case loaded.</p>
+
+<!-- 4. Findings -->
+<h2>4. Findings</h2>
+<p id="denial-reason"></p>
+<table id="findings"></table>
+<ul id="limitations" class="note"></ul>
+
+<!-- 5. Question -->
+<h2>5. Question</h2>
+<div id="question-box"><p class="note">No open question.</p></div>
+
+<!-- 6. Draft -->
+<h2>6. Draft</h2>
+<p class="banner">Draft for review. Not submitted.</p>
+<button id="draft-btn" disabled>Generate draft</button>
+<button id="limited-btn" class="hidden">Request limited draft</button>
+<button id="copy-btn" disabled>Copy</button>
+<textarea id="draft-text" rows="18" readonly placeholder="No current draft."></textarea>
+
+<!-- 7. Public guidance -->
+<h2>7. Public guidance</h2>
+<div id="guidance"><p class="note">No public guidance retrieved for this review.</p></div>
+
+<script>
+// ---- Talking to the Python server (keys stay there) ----
+async function call(path, body) {
+  const res = await fetch(path, body === undefined ? {} :
+    { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const data = await res.json();
+  if (!res.ok) { alert(data.error || "Request failed."); return null; }
+  return data;
+}
+
+function el(tag, text, cls) {
+  const node = document.createElement(tag);
+  if (text !== undefined) node.textContent = text;  // textContent: document text is never run as HTML
+  if (cls) node.className = cls;
+  return node;
+}
+
+// ---- Drawing the page from the server's state ----
+function render(s) {
+  if (!s || !s.loaded) return;
+  const changed = document.getElementById("changed");
+  changed.textContent = s.message;
+  changed.classList.toggle("hidden", s.message !== "Evidence changed. Run review again.");
+
+  const docs = document.getElementById("documents");
+  docs.replaceChildren();
+  for (const d of s.documents) {
+    docs.append(el("label", `${d.title} (${d.kind}, ${d.id})`));
+    const box = el("textarea"); box.rows = 4; box.value = d.text; box.readOnly = !d.editable;
+    box.addEventListener("change", async () => render(await call("/api/edit", { doc_id: d.id, text: box.value })));
+    docs.append(box);
+  }
+
+  const action = s.outcome ? ` | Action: ${s.outcome.outcome} - ${s.outcome.reason}` : "";
+  document.getElementById("status").textContent = `Case ${s.case_id}, revision ${s.revision} | State: ${s.state} | ${s.message}${action}`;
+  document.getElementById("review-btn").disabled = false;
+
+  const reason = s.review && s.review.denial_reason;
+  document.getElementById("denial-reason").textContent = reason && reason.summary ? `Denial reason: ${reason.summary}` : "";
+  const table = document.getElementById("findings");
+  table.replaceChildren();
+  for (const f of (s.review ? s.review.findings : [])) {
+    const row = table.insertRow();
+    row.insertCell().append(el("span", f.status.replace("_", " "), `status ${f.status}`));
+    const cell = row.insertCell();
+    cell.append(el("div", f.statement + (f.user_reported ? " (user-reported)" : "") +
+      (f.downgraded_from ? ` (downgraded from ${f.downgraded_from}: source check failed)` : "")));
+    const panel = el("div", undefined, "hidden");
+    for (const src of f.sources) {
+      panel.append(el("div", src.error ? `${src.source_id}: ${src.error}` : `${src.title}: "${src.passage}"`, "passage"));
+    }
+    if (f.sources.length) {
+      const btn = el("button", "Source");
+      btn.addEventListener("click", () => panel.classList.toggle("hidden"));
+      cell.append(btn, panel);
+    }
+  }
+  const limits = document.getElementById("limitations");
+  limits.replaceChildren(...(s.review ? s.review.limitations : []).map(t => el("li", t)));
+
+  const qbox = document.getElementById("question-box");
+  qbox.replaceChildren();
+  if (s.question) {
+    qbox.append(el("p", s.question));
+    const input = el("input"); input.style.width = "100%";
+    const send = el("button", "Answer");
+    const unknown = el("button", "I don't know");
+    send.addEventListener("click", async () => render(await call("/api/answer", { answer: input.value })));
+    unknown.addEventListener("click", async () => render(await call("/api/answer", { answer: "unknown" })));
+    qbox.append(input, send, unknown);
+  } else {
+    qbox.append(el("p", "No open question.", "note"));
+  }
+
+  document.getElementById("draft-btn").disabled = !s.can_generate_draft;
+  const limited = document.getElementById("limited-btn");
+  limited.classList.toggle("hidden", !s.can_request_limited_draft);
+  limited.disabled = false;
+  document.getElementById("copy-btn").disabled = !s.can_copy;
+  document.getElementById("draft-text").value = s.draft ? s.draft.text : "";
+
+  const guide = document.getElementById("guidance");
+  guide.replaceChildren();
+  if (!s.guidance.length) guide.append(el("p", "No public guidance retrieved for this review.", "note"));
+  for (const g of s.guidance) {
+    guide.append(g.status === "live"
+      ? el("p", `Live source: ${g.url} (retrieved ${g.checked_at} UTC). Describes a general process; it does not establish this case's coverage.`)
+      : el("p", `Unavailable: ${g.reason}. Tried ${g.url || "the allowed page"} at ${g.checked_at} UTC.`));
+  }
+}
+
+// ---- Buttons ----
+async function busy(button, label, work) {
+  const old = button.textContent;
+  button.disabled = true; button.textContent = label;
+  document.getElementById("status").textContent = label;
+  const result = await work();
+  button.textContent = old;
+  render(result || await call("/api/state"));  // after an error, redraw from the server's real state
+}
+
+document.getElementById("load-btn").addEventListener("click", async () =>
+  render(await call("/api/load", { case_id: document.getElementById("case-picker").value })));
+document.getElementById("review-btn").addEventListener("click", e =>
+  busy(e.target, "Reviewing evidence...", () => call("/api/review", {})));
+document.getElementById("draft-btn").addEventListener("click", e =>
+  busy(e.target, "Writing draft...", () => call("/api/draft", { limited: false })));
+document.getElementById("limited-btn").addEventListener("click", e =>
+  busy(e.target, "Writing limited draft...", () => call("/api/draft", { limited: true })));
+document.getElementById("copy-btn").addEventListener("click", () =>
+  navigator.clipboard.writeText(document.getElementById("draft-text").value));
+
+(async () => {
+  const data = await call("/api/cases");
+  const picker = document.getElementById("case-picker");
+  for (const c of data.cases) { const o = el("option", c.title); o.value = c.id; picker.append(o); }
+  render(await call("/api/state"));
+})();
+</script>
+</body>
+</html>

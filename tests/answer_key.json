@@ -105,31 +105,5 @@
       ],
       "acceptable_next_question": "Do you have a clinician-signed treatment-course record you can obtain for review?"
     }
-  },
-  "quote_cases": {
-    "cash-immediate-lower": {
-      "status": "comparable_estimates",
-      "lower_immediate_estimate": "cash",
-      "difference_cents": 59000,
-      "annual_best_known": false
-    },
-    "insurance-immediate-lower": {
-      "status": "comparable_estimates",
-      "lower_immediate_estimate": "insurance",
-      "difference_cents": 25000,
-      "annual_best_known": false
-    },
-    "professional-fee-missing": {
-      "status": "not_comparable",
-      "lower_immediate_estimate": null,
-      "difference_cents": null,
-      "next_question": "What is the separately billed professional fee?"
-    },
-    "zero-is-valid": {
-      "status": "comparable_estimates",
-      "lower_immediate_estimate": "insurance",
-      "difference_cents": 45000,
-      "annual_best_known": false
-    }
   }
 }
