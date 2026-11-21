@@ -19,6 +19,8 @@ if not os.getenv("SOLARI_API_KEY"):
 
 from solari_browser import Solari  # imported after the key check so the error above stays simple
 
+from safe_errors import safe_solari_error  # never print raw error text (may hold session IDs)
+
 SCREENSHOT = Path(__file__).resolve().parent / "outputs" / "screenshots" / "solari_test.png"
 
 
@@ -42,7 +44,7 @@ if __name__ == "__main__":
     try:
         asyncio.run(main())
     except Exception as error:  # 402 (paid feature), auth, timeout, network...
-        sys.exit(f"Solari test FAILED: {type(error).__name__}: {error}")
+        sys.exit(f"Solari test FAILED: {safe_solari_error(error)}")
     if SCREENSHOT.exists():
         print("Solari test PASSED. Screenshot saved to outputs/screenshots/solari_test.png")
     else:
