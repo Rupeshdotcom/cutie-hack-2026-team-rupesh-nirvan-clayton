@@ -15,9 +15,11 @@ Tracks: AI/ML + Data (Solari), Social Impact, Beginner
 ```powershell
 python -m venv .venv
 .\.venv\Scripts\Activate.ps1
-pip install -r requirements.txt
+pip install --only-binary cryptography -r requirements.txt
 copy .env.example .env
 ```
+(`--only-binary cryptography` avoids a failed Rust/C++ build on Windows ARM laptops; on other machines plain `pip install -r requirements.txt` works too.)
+
 Then edit `.env` and set `GEMINI_MODEL` to a free-tier model name you verified in Google AI Studio.
 
 _More sections (tests, limits, TODO(IDEA) points, AI tools used) are added in Checkpoint C._
