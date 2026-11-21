@@ -221,3 +221,12 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# --- Cutie Hack scaffold ---
+# Secrets: never commit .env (copy .env.example instead)
+.env
+.venv/
+__pycache__/
+# Generated results and screenshots, but keep the empty folder
+outputs/*
+!outputs/.gitkeep
