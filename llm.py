@@ -9,6 +9,8 @@ import sys
 
 from dotenv import load_dotenv
 
+from safe_errors import safe_gemini_error
+
 # Load SOLARI_API_KEY, GEMINI_API_KEY and GEMINI_MODEL from the .env file.
 load_dotenv()
 
@@ -52,8 +54,9 @@ def ask_gemini(prompt, instructions=None, json_mode=False):
             contents=prompt,
             config=config,
         )
-    except Exception as error:  # quota (429), bad key, bad model name, network...
-        raise LLMError(f"Gemini call failed: {type(error).__name__}: {error}") from None
+    except Exception as error:  # quota (429), bad key, bad model name, 503, network...
+        # Fixed sentence only: raw error text never reaches the user, logs or output files.
+        raise LLMError(safe_gemini_error(error)) from None
     reply = (response.text or "").strip()
     if not reply:
         raise LLMError("Gemini returned an empty reply.")

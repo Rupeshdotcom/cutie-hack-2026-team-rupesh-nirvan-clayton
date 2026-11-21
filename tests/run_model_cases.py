@@ -3,7 +3,8 @@ Real-model run of every fixture case (uses Gemini and your .env; costs a few cal
 
 The model sees ONLY fixtures/cases.json documents. tests/answer_key.json is read
 here, after the run, to check results. The scripted "user" answers every question
-with "unknown" and asks for a draft whenever the review is READY_FOR_DRAFT.
+with "unknown", asks for a draft whenever the review is READY_FOR_DRAFT, and
+deliberately requests a LIMITED draft after STOP_UNRESOLVED.
 Saves everything to outputs/model_runs/ for a human to read.
 
 Run from the project folder:  python tests/run_model_cases.py
@@ -41,9 +42,15 @@ def run_case(case, record, max_answers=2):
         case.add_answer(f"q{len(case.answers) + 1}", outcome["question"], "unknown")
     record["review"] = case.review
     if case.can_generate_draft():
+        record["draft_kind"] = "full"
         record["draft_result"] = agent.generate_draft(case, ask=paced_ask)
         record["draft"] = case.draft
+    elif case.can_request_limited_draft():  # scripted user deliberately requests a limited draft
+        record["draft_kind"] = "limited"
+        record["draft_result"] = agent.generate_draft(case, ask=paced_ask, limited=True)
+        record["draft"] = case.draft
     record["final_state"] = case.state
+    record["final_message"] = case.message  # already a safe, fixed sentence on failures
     record["source_panels"] = {f["id"]: agent.source_panel(case, f) for f in (case.review or {}).get("findings", [])
                                if f["status"] in ("supported", "contradictory")}
     return record
@@ -67,9 +74,15 @@ def code_checks(case_id, record):
                        (review.get("denial_reason") or {}).get("source_id") == "denial-fictional-1"))
     bad_panels = [fid for fid, panel in record["source_panels"].items() if any("error" in p for p in panel)]
     checks.append(("every supported/contradictory source opens to its current passage", not bad_panels))
+    questions = [o["question"] for o in record["outcomes"] if o.get("question")]
+    checks.append(("every question asks one thing (single '?')", all(q.count("?") == 1 for q in questions)))
     draft = record.get("draft")
     if draft:
-        checks.append(("draft carries 'Draft for review. Not submitted.'", agent.DRAFT_LABEL in draft["draft_text"]))
+        text = draft["draft_text"]
+        checks.append(("draft ends 'Draft for review. Not submitted.'", text.endswith(agent.DRAFT_LABEL)))
+        if draft.get("limited"):
+            checks.append(("limited draft starts with LIMITED label", text.startswith(agent.LIMITED_LABEL)))
+            checks.append(("limited draft has visible [PLACEHOLDER: ...]", "[PLACEHOLDER:" in text))
     return [{"check": name, "pass": bool(ok)} for name, ok in checks]
 
 
@@ -81,7 +94,8 @@ def save(name, record):
         print("  " + line)
     for o in record["outcomes"]:
         print(f"  outcome: {o['outcome']} - {o['reason']}" + (f" | Q: {o['question']}" if o.get("question") else ""))
-    print(f"  draft: {record.get('draft_result', 'not generated')}; final state: {record['final_state']}")
+    print(f"  draft: {record.get('draft_kind', '')} {record.get('draft_result', 'not generated')}; "
+          f"final state: {record['final_state']}")
     for c in record["checks"]:
         print(f"  [{'PASS' if c['pass'] else 'FAIL'}] {c['check']}")
 

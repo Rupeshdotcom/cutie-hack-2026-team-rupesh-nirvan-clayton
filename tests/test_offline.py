@@ -19,7 +19,8 @@ import case_model  # noqa: E402
 import prompts  # noqa: E402
 from case_model import CHANGED_MESSAGE, load_fixture_case, make_snapshot_id  # noqa: E402
 from quote_compare import compare_quotes  # noqa: E402
-from safe_errors import safe_solari_error  # noqa: E402
+from llm import LLMError  # noqa: E402
+from safe_errors import safe_gemini_error, safe_solari_error  # noqa: E402
 from solari_browser import SolariError  # noqa: E402
 
 ANSWER_KEY = json.loads((ROOT / "tests" / "answer_key.json").read_text(encoding="utf-8"))
@@ -294,6 +295,89 @@ class Controller(unittest.TestCase):
         self.assertEqual(agent.source_panel(case, finding)[0]["passage"], "with completion documented")
         case.remove_document("record-present-1")
         self.assertIn("error", agent.source_panel(case, finding)[0])
+
+
+class LimitedDraftAndOneFact(unittest.TestCase):
+    """C2.1: limited draft after STOP_UNRESOLVED, one-fact questions, kept reviews."""
+
+    def scripted(self, *replies):
+        return Controller.scripted(self, *replies)
+
+    def stopped_case(self):
+        case = load_fixture_case("evidence-present")
+        ask, _ = self.scripted(fake_review(action="STOP_UNRESOLVED", related=()))
+        agent.run_review(case, ask=ask, log=lambda _: None)
+        return case
+
+    def test_limited_draft_only_after_stop_unresolved(self):
+        for action in ("ASK_USER", "READY_FOR_DRAFT"):
+            case = load_fixture_case("evidence-present")
+            case.finish_review(case.start_review(), fake_review(action=action, related=()))
+            self.assertFalse(case.can_request_limited_draft(), action)
+        self.assertTrue(self.stopped_case().can_request_limited_draft())
+
+    def test_limited_draft_labels_and_placeholders(self):
+        case = self.stopped_case()
+        self.assertFalse(case.can_generate_draft())  # a full draft is still off
+        ask, _ = self.scripted(FAKE_DRAFT)
+        self.assertEqual(agent.generate_draft(case, ask=ask, limited=True), "accepted")
+        text = case.draft["draft_text"]
+        self.assertTrue(text.startswith(agent.LIMITED_LABEL))
+        self.assertTrue(text.endswith(agent.DRAFT_LABEL))
+        self.assertIn("[PLACEHOLDER: unresolved (missing) - Whether the record was in the original submission.]", text)
+        self.assertTrue(case.draft["limited"])
+
+    def test_limited_draft_still_rejects_unsupported_assertions(self):
+        case = self.stopped_case()
+        bad = json.loads(FAKE_DRAFT)
+        bad["assertions"] = [{"text": "It was submitted.", "finding_ids": ["f4"]}]
+        ask, _ = self.scripted(json.dumps(bad))
+        self.assertEqual(agent.generate_draft(case, ask=ask, limited=True), "failed")
+        self.assertFalse(case.can_copy_draft())
+
+    def test_two_part_question_is_rejected(self):
+        case = load_fixture_case("evidence-present")
+        two = json.loads(fake_review())
+        two["next_action"]["question"] = "Was the course completed? Do you have the record?"
+        ask, calls = self.scripted(json.dumps(two), fake_review())
+        outcome = agent.run_review(case, ask=ask, log=lambda _: None)
+        self.assertEqual(len(calls), 2)
+        self.assertIn("exactly one fact", calls[1])
+        self.assertEqual(outcome["outcome"], agent.WAITING_FOR_ANSWER)
+
+    def test_failed_later_call_keeps_accepted_review(self):
+        case = load_fixture_case("evidence-present")
+        two = json.loads(fake_review())
+        two["next_action"]["question"] = "A? B?"
+        replies = iter([json.dumps(two)])
+
+        def ask(prompt, instructions=None, json_mode=False):
+            try:
+                return next(replies)
+            except StopIteration:
+                raise LLMError("Gemini error: the model is temporarily unavailable (HTTP 503); try again later")
+        outcome = agent.run_review(case, ask=ask, log=lambda _: None)
+        self.assertEqual(outcome["outcome"], agent.FAILED)
+        self.assertIsNotNone(case.review)  # cycle 1's accepted review survived cycle 2's failure
+        self.assertEqual(len(case.accepted_reviews), 1)
+        saved = agent.REVIEWS_DIR / f"evidence-present-rev{case.case_revision}-1.json"
+        self.assertTrue(saved.exists())
+        self.assertFalse(case.can_generate_draft())
+
+
+class SafeGeminiErrors(unittest.TestCase):
+    def test_no_raw_gemini_text(self):
+        raw = "{'error': {'code': 503, 'message': 'high demand key=AIzaFAKE', 'status': 'UNAVAILABLE'}}"
+        server = type("ServerError", (Exception,), {"code": 503})(raw)
+        quota = type("ClientError", (Exception,), {"code": 429})(raw)
+        other = ValueError(raw)
+        for error in (server, quota, other):
+            message = safe_gemini_error(error)
+            with self.subTest(message):
+                self.assertNotIn("AIzaFAKE", message)
+                self.assertNotIn("high demand", message)
+        self.assertIn("503", safe_gemini_error(server))
+        self.assertIn("429", safe_gemini_error(quota))
 
 
 class SafeSolariErrors(unittest.TestCase):

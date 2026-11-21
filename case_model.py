@@ -71,6 +71,7 @@ class Case:
         self.input_snapshot_id = make_snapshot_id(self.documents, self.answers)
         self.review = None   # accepted review for the current pair, or None
         self.draft = None    # accepted draft for the current pair, or None
+        self.accepted_reviews = []  # history of every accepted review (each carries its revision/snapshot)
         self.state = REVIEW_NEEDED
         self.message = "Review needed."
 
@@ -135,13 +136,20 @@ class Case:
             return "failed"
         review["case_revision"], review["input_snapshot_id"] = ticket
         self.review, self.draft = review, None
+        self.accepted_reviews.append(review)  # history only; the current display still follows the rules above
         self.state, self.message = REVIEW_READY, "Review complete."
         return "accepted"
 
-    def start_draft(self):
-        """Only allowed when the current review is accepted. Returns the ticket."""
-        if not self.can_generate_draft():
-            raise RuntimeError("Generate draft is unavailable: review the current evidence first.")
+    def can_request_limited_draft(self):
+        """After a current review that stopped with STOP_UNRESOLVED, the user may ask for a LIMITED draft."""
+        return (self.state in (REVIEW_READY, DRAFT_FAILED, DRAFT_READY) and self.review is not None
+                and self.review["next_action"].get("action") == "STOP_UNRESOLVED")
+
+    def start_draft(self, limited=False):
+        """Full draft needs READY_FOR_DRAFT; a limited draft needs STOP_UNRESOLVED. Returns the ticket."""
+        allowed = self.can_request_limited_draft() if limited else self.can_generate_draft()
+        if not allowed:
+            raise RuntimeError("Draft is unavailable for the current review state.")
         self.state, self.message = DRAFT_RUNNING, "Writing draft..."
         self.draft = None
         return self.current_pair()

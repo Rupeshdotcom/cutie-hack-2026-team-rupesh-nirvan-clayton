@@ -34,7 +34,7 @@ Return ONLY valid JSON using this schema:
     "action": "ASK_USER|RETRIEVE_PUBLIC_GUIDANCE|READY_FOR_DRAFT|STOP_UNRESOLVED",
     "reason": "short reason",
     "related_finding_ids": ["finding IDs"],
-    "question": "one useful missing-fact question if ASK_USER, else null",
+    "question": "ONE question about ONE missing fact if ASK_USER, else null",
     "source_url": "one allowed URL if RETRIEVE_PUBLIC_GUIDANCE, else null"
   },
   "limitations": ["material limits"]
@@ -57,6 +57,7 @@ Rules:
 
 Choosing next_action (exactly one):
 - ASK_USER: one missing fact the user could answer would materially change the review. Do not repeat a question listed under already_asked_questions or already answered in user_answers.
+  The question must ask for exactly ONE fact: a single sentence with a single question mark. Never join two facts with "and" or "or" (wrong: "Was the course completed, and do you have the record?"). If several facts are missing, ask only for the most important one; the others stay as missing findings.
 - RETRIEVE_PUBLIC_GUIDANCE: only if one of these public process pages would settle a process question (never private facts): """ + ", ".join(ALLOWED_SOURCES) + """
 - READY_FOR_DRAFT: enough is known for a cautious reviewable draft. Missing items may remain as placeholders. This is not proof of coverage.
 - STOP_UNRESOLVED: a needed fact cannot be obtained (for example the user answered "unknown" and nothing else would help a draft), or the evidence conflicts in a way only new records could resolve.
@@ -79,6 +80,15 @@ Use only supported findings as asserted facts. If the support is user-reported, 
 State the insurer's cited reason accurately. Explain the supplied supporting evidence without declaring the denial unlawful or promising reversal. Request reconsideration and clarification where appropriate; do not fabricate a legal argument. No clinical recommendation, made-up study, statute or deadline. Do not include an appeal deadline unless a supplied source establishes it.
 
 Do not claim any document was part of the original submission unless a source says so. Do not manufacture names, claim numbers, signatures or clinician statements; use visible placeholders. Keep a calm factual tone. End draft_text with a short review checklist and the line: Draft for review. Not submitted.
+"""
+
+
+# ---- Extra rules when the user explicitly asks for a LIMITED draft after STOP_UNRESOLVED ----
+LIMITED_DRAFT_RULES = """
+THIS IS A LIMITED DRAFT. The review stopped unresolved and the user explicitly asked for a limited draft anyway.
+- Assert ONLY supported findings. Every missing, contradictory or not_established item must appear in draft_text as a visible [PLACEHOLDER: ...] describing what is unresolved, never as a fact.
+- Do not ask the insurer to approve based on unresolved items. Ask for reconsideration or clarification only as far as the supported findings allow.
+- Begin draft_text with: LIMITED DRAFT - some facts are unresolved.
 """
 
 

@@ -60,6 +60,11 @@ def main():
     if case.can_generate_draft() and input("\nGenerate a draft? (y/n): ").strip().lower() == "y":
         result = agent.generate_draft(case)
         print("\n" + (case.draft["draft_text"] if result == "accepted" else case.message))
+    # ---- 4. After STOP_UNRESOLVED: a LIMITED draft only if you deliberately request it ----
+    elif case.can_request_limited_draft() and \
+            input("\nReview stopped unresolved. Request limited draft? (y/n): ").strip().lower() == "y":
+        result = agent.generate_draft(case, limited=True)
+        print("\n" + (case.draft["draft_text"] if result == "accepted" else case.message))
 
     save(case, outcome)
     print(f"\nSaved to outputs/result.json (state: {case.state})")

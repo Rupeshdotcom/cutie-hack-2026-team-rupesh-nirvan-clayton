@@ -1,5 +1,5 @@
 """
-safe_errors.py - turn a Solari/browser failure into a short, safe sentence.
+safe_errors.py - turn a Solari/browser or Gemini failure into a short, safe sentence.
 
 Raw error text can contain session IDs or URLs with tokens, so it is NEVER shown
 or logged. We only use the HTTP status, a known Solari error code, or the error's
@@ -41,3 +41,28 @@ def safe_solari_error(error):
     if "Timeout" in name:
         return "Browser error: the page took too long to load"
     return f"Browser error: unexpected {name} (details hidden for safety)"
+
+
+# ---- Gemini (google-genai) errors: same idea, fixed sentences only ----
+GEMINI_STATUS_MESSAGES = {
+    400: "Gemini rejected the request (check GEMINI_MODEL in .env)",
+    401: "the Gemini API key was rejected (check GEMINI_API_KEY in .env)",
+    403: "Gemini refused access for this API key",
+    404: "the Gemini model was not found (check GEMINI_MODEL in .env)",
+    429: "Gemini rate limit or free-tier quota reached (HTTP 429)",
+}
+
+
+def safe_gemini_error(error):
+    """Return a safe one-line description of a Gemini failure. Never includes raw error text."""
+    code = getattr(error, "code", None)
+    if isinstance(code, int):
+        if code in GEMINI_STATUS_MESSAGES:
+            return f"Gemini error: {GEMINI_STATUS_MESSAGES[code]}"
+        if code >= 500:
+            return f"Gemini error: the model is temporarily unavailable (HTTP {code}); try again later"
+        return f"Gemini error: request failed (HTTP {code})"
+    name = type(error).__name__
+    if "Timeout" in name:
+        return "Gemini error: the request took too long"
+    return f"Gemini error: unexpected {name} (details hidden for safety)"

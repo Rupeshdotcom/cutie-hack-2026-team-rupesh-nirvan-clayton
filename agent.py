@@ -5,10 +5,13 @@ Each review cycle, Gemini proposes exactly ONE next action. Code validates it:
   ASK_USER                 -> pause with one new question (never a repeat)
   RETRIEVE_PUBLIC_GUIDANCE -> allowlisted URL only; Solari retrieval is wired in C3
   READY_FOR_DRAFT          -> Generate draft becomes available (user still decides)
-  STOP_UNRESOLVED          -> stop, keep what is missing visible, no auto-retry
+  STOP_UNRESOLVED          -> stop, keep what is missing visible, no auto-retry;
+                              the user may deliberately request a LIMITED draft
 Limits per case revision: MAX_CYCLES review calls, MAX_RETRIEVALS lookups.
 """
+import json
 import re
+from pathlib import Path
 
 import case_model
 import prompts
@@ -17,6 +20,8 @@ from llm import LLMError, ask_gemini
 MAX_CYCLES = 3
 MAX_RETRIEVALS = 2
 DRAFT_LABEL = "Draft for review. Not submitted."
+LIMITED_LABEL = "LIMITED DRAFT - some facts are unresolved."
+REVIEWS_DIR = Path(__file__).resolve().parent / "outputs" / "reviews"
 
 # Outcomes a run can end in (shown to the user with a reason).
 WAITING_FOR_ANSWER = "waiting_for_answer"
@@ -62,6 +67,8 @@ def check_action(case, budget, action):
         question = (action.get("question") or "").strip()
         if not question:
             return "ASK_USER needs one question."
+        if question.count("?") > 1:
+            return f"Ask for exactly one fact in one question, not several: {question}"
         if normalize(question) in {normalize(q) for q in asked_questions(case)}:
             return f"Question already asked or answered, do not repeat it: {question}"
     if kind == "RETRIEVE_PUBLIC_GUIDANCE":
@@ -86,18 +93,22 @@ def run_review(case, ask=ask_gemini, log=print):
     notes = []
     while budget["cycles"] < MAX_CYCLES:
         budget["cycles"] += 1
+        previous = current_review(case)  # kept if this cycle fails
         ticket = case.start_review()
         try:
             reply = ask(prompts.review_input(case, asked_questions(case), notes),
                         instructions=prompts.REVIEW_INSTRUCTIONS, json_mode=True)
-        except LLMError as error:
+        except LLMError as error:  # error text is already a fixed, safe sentence
             case.state, case.message = case_model.REVIEW_FAILED, f"Review failed: {error}"
+            case.review = previous
             return finish(case, budget, FAILED, str(error))
         result = case.finish_review(ticket, reply)
         if result == "discarded":
             return {"outcome": DISCARDED, "reason": "evidence changed while the review ran"}
         if result == "failed":
+            case.review = previous
             return finish(case, budget, FAILED, case.message)  # no automatic retry
+        save_review_file(case)  # saved immediately, so a later failure cannot lose it
 
         action = case.review["next_action"]
         problem = check_action(case, budget, action)
@@ -122,19 +133,54 @@ def run_review(case, ask=ask_gemini, log=print):
     return finish(case, budget, UNRESOLVED, f"cycle budget of {MAX_CYCLES} reached ({'; '.join(notes)})")
 
 
-# ---- Draft: only on the user's request, only after READY_FOR_DRAFT ----
-def generate_draft(case, ask=ask_gemini):
-    """Ask Gemini for a draft from the current checked review. Returns 'accepted', 'discarded' or 'failed'."""
-    ticket = case.start_draft()  # raises if the current review is not READY_FOR_DRAFT
+# ---- Draft: only on the user's request ----
+def unresolved_placeholders(review):
+    """One visible placeholder per finding that is NOT supported (built by code, not the model)."""
+    return [f"[PLACEHOLDER: unresolved ({f['status']}) - {f['statement']}]"
+            for f in review["findings"] if f["status"] != "supported"]
+
+
+def finalize_text(text, review, limited):
+    """Limited drafts get the label at the top and every unresolved item listed; all end with DRAFT_LABEL."""
+    body = text.strip()
+    if body.endswith(DRAFT_LABEL):
+        body = body[: -len(DRAFT_LABEL)].rstrip()
+    if limited:
+        if not body.startswith(LIMITED_LABEL):
+            body = LIMITED_LABEL + "\n\n" + body
+        body += "\n\nUnresolved items (not asserted):\n" + "\n".join(unresolved_placeholders(review))
+    return body + "\n\n" + DRAFT_LABEL
+
+
+def generate_draft(case, ask=ask_gemini, limited=False):
+    """Full draft after READY_FOR_DRAFT, or a LIMITED draft the user explicitly requests after
+    STOP_UNRESOLVED. Returns 'accepted', 'discarded' or 'failed'."""
+    ticket = case.start_draft(limited=limited)  # raises if the review state does not allow it
+    instructions = prompts.DRAFT_INSTRUCTIONS + (prompts.LIMITED_DRAFT_RULES if limited else "")
     try:
-        reply = ask(prompts.draft_input(case), instructions=prompts.DRAFT_INSTRUCTIONS, json_mode=True)
+        reply = ask(prompts.draft_input(case), instructions=instructions, json_mode=True)
     except LLMError as error:
         case.state, case.message = case_model.DRAFT_FAILED, f"Draft failed: {error}"
         return "failed"
-    result = case.finish_draft(ticket, reply)
-    if result == "accepted" and DRAFT_LABEL not in case.draft["draft_text"]:
-        case.draft["draft_text"] += "\n\n" + DRAFT_LABEL
+    result = case.finish_draft(ticket, reply)  # code still rejects assertions not backed by supported findings
+    if result == "accepted":
+        case.draft["draft_text"] = finalize_text(case.draft["draft_text"], case.review, limited)
+        case.draft["limited"] = limited
     return result
+
+
+# ---- Keeping accepted reviews ----
+def current_review(case):
+    """The review on screen, only if it belongs to the case's current revision and snapshot."""
+    r = case.review
+    return r if r and (r["case_revision"], r["input_snapshot_id"]) == case.current_pair() else None
+
+
+def save_review_file(case):
+    """Write the just-accepted review to outputs/reviews/ right away."""
+    REVIEWS_DIR.mkdir(parents=True, exist_ok=True)
+    name = f"{case.case_id}-rev{case.case_revision}-{len(case.accepted_reviews)}.json"
+    (REVIEWS_DIR / name).write_text(json.dumps(case.review, indent=2, ensure_ascii=False), encoding="utf-8")
 
 
 # ---- Source click-through (addendum step 5) ----
