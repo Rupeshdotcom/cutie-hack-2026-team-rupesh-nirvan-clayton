@@ -1,5 +1,8 @@
-# Denial Evidence Review (Cutie Hack 2026)
+# Denial Draft Helper
 
+**Turn a confusing insurance denial into a reviewable response draft that shows which statements have evidence and what is still missing.** (Cutie Hack 2026)
+
+## What the app does
 A same-day hackathon prototype that helps a person prepare a response to a medical-insurance denial. You load a **fictional** case (a denial, a policy excerpt and some facts). Gemini reviews the evidence: which statements are supported, missing, contradictory or not established, each with the exact source passage. A bounded agent then picks **one** next step: ask you one question, read one public guidance page through Solari, say the case is ready for a draft, or stop because something can't be resolved. Drafts are for human review only. Nothing is ever sent, filed or submitted.
 
 This is not medical, legal or coverage advice, and it does not decide whether an appeal will succeed. Similar tools already exist; this project is about a careful, traceable workflow, not a new invention.
@@ -58,10 +61,11 @@ Then open **http://127.0.0.1:8000** in your browser, and press Ctrl+C in the ter
   A quote check proves the passage is real; it does not prove the interpretation is right.
 
 ## What is saved and what is fallback
+- **Saved reviews:** every review that passes the code checks is saved straight away to `outputs/reviews/<case>-rev<N>-<n>.json`. If a later Gemini call fails, the last accepted review is kept and stays visible.
 - **There is no saved or cached copy of the guidance page.** If Solari can't read it (timeout, block, error), the panel says **Unavailable** with a plain reason, the URL tried and the time. The app never shows an old copy as if it were live.
 - **Error messages:** Gemini and Solari errors are shown only as fixed plain sentences, such as "Gemini rate limit or free-tier quota reached (HTTP 429)". Raw error text is never shown or saved.
 - **Local files** go to `outputs/`, which is gitignored:
-  - each accepted review is saved immediately in `outputs/reviews/`;
+  - saved reviews go to `outputs/reviews/`, as above;
   - CLI results go to `outputs/result.json`;
   - real-model test runs go to `outputs/model_runs/`.
 - **Case state:** the website keeps one case in memory for one person. Nothing is stored permanently, and there are no accounts or database.
@@ -78,11 +82,14 @@ Then open **http://127.0.0.1:8000** in your browser, and press Ctrl+C in the ter
   - **embedded-instruction:** the review treated the injected instruction as text, not evidence.
 - **The website:** the full flow worked in a browser at phone and laptop widths using fake model replies. In a live run it correctly showed the 429 quota error as "Review failed".
 
-## Not yet verified — Gemini free-tier quota reached during the event
-- A real review and draft through the website
+## Still unverified
+Each of these: **not yet verified — Gemini free-tier quota reached during the event.**
+- The live website review: a real Gemini review, and a draft, run through the website
 - The evidence-absent draft
 - The embedded-instruction draft
-- The limited draft after the record is removed (addendum step 3)
+- The step 3 limited draft, after the record is removed
+
+Also not yet verified, for the same reason:
 - Drafts for the conflicting and no-policy cases (those reviews stopped unresolved before the limited-draft option existed)
 - Gemini itself choosing to retrieve the guidance page inside a full live run. The retrieval was tested live on its own, and inside the controller with fake replies.
 
@@ -106,6 +113,9 @@ Then open **http://127.0.0.1:8000** in your browser, and press Ctrl+C in the ter
 - `tests/`: answer key, offline tests and real-model runner
 
 ## AI tools used
-- **Claude Code** (Anthropic, Claude Opus 5.5) was the coding assistant. It wrote most of the code, tests and this README under the team's direction. The team set the requirements and reviewed each checkpoint. Inside Claude Code we also used two community skills: `find-skills` (vercel-labs) and `deslop` (cursor/plugins, a checklist for removing unnecessary AI-style code clutter).
-- **Google Gemini** (via `google-genai`) is used **at runtime** inside the app for the evidence review and the drafts.
-- **Solari** is the cloud browser the app uses for the live public-page retrieval. It is not an AI model.
+- **Claude Code** (Anthropic, Claude Opus 5.5) was the coding assistant. It wrote most of the code, tests and this README under the team's direction. The team set the requirements and reviewed each checkpoint.
+  - It used the **`deslop`** cleanup skill (cursor/plugins), a checklist for removing unnecessary AI-style code clutter. It was applied to new code from the later checkpoints onward.
+  - The `find-skills` skill (vercel-labs) was used once, to find `deslop`.
+- Muse — planning, prompt design, and review.
+- **Google Gemini** (via `google-genai`) is the **runtime model**. The app calls it for the evidence review and the drafts.
+- **Solari** is browser infrastructure, not a model. The app uses its cloud browser for the live retrieval of the healthcare.gov page.
