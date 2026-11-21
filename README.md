@@ -89,7 +89,7 @@ Then open **http://127.0.0.1:8000** in your browser, and press Ctrl+C in the ter
 ## Limits
 - Fictional cases only, one denial type, and a policy excerpt rather than a full contract.
 - No accounts, uploads, OCR, submissions, insurer connections, or medical or legal judgments.
-- Drafts contain visible `[PLACEHOLDER: ...]` text for anything unresolved. The draft prompt forbids fields for sensitive identifiers such as member ID or date of birth. That rule lives in the prompt, not in code, and has not yet been verified with a live draft because the Gemini free-tier quota was reached.
+- Drafts contain visible `[PLACEHOLDER: ...]` text for anything unresolved. The draft prompt forbids fields for sensitive identifiers such as member ID or date of birth. That rule lives in the prompt, not in code. With a live draft: not yet verified — Gemini free-tier quota reached during the event.
 
 ## Files
 - `server.py` + `static/index.html`: the local website
