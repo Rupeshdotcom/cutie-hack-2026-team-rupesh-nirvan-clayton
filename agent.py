@@ -1,223 +1,152 @@
 """
-agent.py - the adaptive research loop.
+agent.py - the bounded controller (Pack v2 section C).
 
-1. parse_need:  understand what must be answered
-2. plan:        pick ONE next page to visit
-3. browse_step: visit it (or record why it was blocked)
-4. evaluate:    is the evidence enough? CONTINUE or STOP
-   (steps 2-4 repeat, within MAX_ITERATIONS and MAX_PAGES)
-5. summarize:   honest JSON, claims checked against the real page text
+Each review cycle, Gemini proposes exactly ONE next action. Code validates it:
+  ASK_USER                 -> pause with one new question (never a repeat)
+  RETRIEVE_PUBLIC_GUIDANCE -> allowlisted URL only; Solari retrieval is wired in C3
+  READY_FOR_DRAFT          -> Generate draft becomes available (user still decides)
+  STOP_UNRESOLVED          -> stop, keep what is missing visible, no auto-retry
+Limits per case revision: MAX_CYCLES review calls, MAX_RETRIEVALS lookups.
 """
-import ipaddress
 import re
-from datetime import datetime, timezone
-from pathlib import Path
-from urllib.parse import urlparse
 
-# ---- Limits: keep runs small (free plan, short demo) ----
-MAX_ITERATIONS = 3   # how many plan -> browse -> evaluate rounds
-MAX_PAGES = 5        # hard cap on pages visited in one run
-MAX_QUOTE_CHARS = 280
+import case_model
+import prompts
+from llm import LLMError, ask_gemini
 
-# While True, browsing and Gemini are FAKED so the loop runs with no keys.
-# Checkpoint C replaces the stubs with real Solari + Gemini calls.
-USE_STUBS = True
+MAX_CYCLES = 3
+MAX_RETRIEVALS = 2
+DRAFT_LABEL = "Draft for review. Not submitted."
 
-PROJECT_DIR = Path(__file__).resolve().parent
-SCREENSHOT_DIR = PROJECT_DIR / "outputs" / "screenshots"
+# Outcomes a run can end in (shown to the user with a reason).
+WAITING_FOR_ANSWER = "waiting_for_answer"
+READY = "ready_for_draft"
+UNRESOLVED = "stopped_unresolved"
+FAILED = "review_failed"
+DISCARDED = "discarded"
 
-
-# ---- Small helpers ----
-def now_utc():
-    """Current time as ISO 8601 UTC, e.g. 2026-11-21T21:05:00Z."""
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+# One budget per case revision. A new revision (an edit or answer) gets a fresh one;
+# anything found inside a run does NOT renew it.
+_budgets = {}
 
 
-def screenshot_path_for(url):
-    """Make a screenshot filename like outputs/screenshots/20261121T210500Z_example-com.png."""
-    stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
-    host = urlparse(url).hostname or "page"
-    slug = re.sub(r"[^a-z0-9]+", "-", host.lower()).strip("-")[:40]
-    SCREENSHOT_DIR.mkdir(parents=True, exist_ok=True)
-    return f"outputs/screenshots/{stamp}_{slug}.png"
+def budget_for(case):
+    key = (id(case), case.case_revision)
+    if key not in _budgets:
+        _budgets[key] = {"cycles": 0, "retrievals": 0, "urls": [], "outcome": None}
+    return _budgets[key]
 
 
-def is_simple_public_url(url):
-    """Code check on any suggested URL: plain public http(s) page, no logins, no local addresses."""
-    try:
-        parts = urlparse(url)
-    except ValueError:
-        return False
-    if parts.scheme not in ("http", "https") or not parts.hostname:
-        return False
-    if parts.username or parts.password:  # no user:password@ links
-        return False
-    host = parts.hostname.lower()
-    if host == "localhost" or host.endswith((".local", ".localhost", ".internal")):
-        return False
-    try:
-        if not ipaddress.ip_address(host).is_global:  # blocks 127.0.0.1, 192.168.x.x, ...
-            return False
-    except ValueError:
-        pass  # a normal domain name, not a raw IP address
-    path = parts.path.lower()
-    if any(word in path for word in ("login", "signin", "sign-in", "signup", "account", "checkout")):
-        return False
-    return True
+def normalize(question):
+    """Lowercase, letters and digits only, so tiny wording changes still count as a repeat."""
+    return re.sub(r"[^a-z0-9]+", " ", (question or "").lower()).strip()
 
 
-# ---- Step 1: understand the need ----
-def parse_need(user_text):
-    """Turn the user's text into questions to answer and what evidence would be enough."""
-    # STUB: Checkpoint C asks Gemini to fill these fields.
-    return {
-        "text": user_text,
-        "questions": [user_text],
-        "enough_evidence": "A public page that directly answers the question.",
-    }
+def asked_questions(case):
+    """Every question already asked or answered for this case (all revisions)."""
+    return [a["question"] for a in case.answers] + list(getattr(case, "asked_questions", []))
 
 
-# ---- Step 2: plan the next page ----
-def plan(need, evidence_so_far, hint=""):
-    """Pick the NEXT page only: {"url": ..., "why": ...}, or None if nothing new is worth trying."""
-    tried = [e["url"] for e in evidence_so_far]
-    # STUB: Checkpoint C asks Gemini, using the need, what we have, and the hint.
-    url = "https://example.com"
-    if url in tried:
-        return None  # never visit the same page twice
-    return {"url": url, "why": "stub step to prove the loop runs"}
+def finish(case, budget, outcome, reason, **extra):
+    """Record and return how the run ended (also printed by main.py)."""
+    budget["outcome"] = dict({"outcome": outcome, "reason": reason, "cycles_used": budget["cycles"],
+                              "retrievals_used": budget["retrievals"]}, **extra)
+    return budget["outcome"]
 
 
-# ---- Step 3: visit one page ----
-def browse_step(step):
-    """Visit ONE page. Returns an evidence record: status ok (text + screenshot) or blocked (reason)."""
-    checked_at = now_utc()
-    # STUB: Checkpoint C opens the page with Solari and saves a real screenshot.
-    return {
-        "url": step["url"],
-        "status": "ok",
-        "reason": "",
-        "text": "Example Domain. This domain is for use in illustrative examples in documents.",
-        "screenshot_path": "",
-        "checked_at": checked_at,
-    }
+# ---- Code checks on the model's proposed action ----
+def check_action(case, budget, action):
+    """Return None if the proposal is acceptable, else feedback for the next cycle."""
+    kind = action.get("action")
+    if kind == "ASK_USER":
+        question = (action.get("question") or "").strip()
+        if not question:
+            return "ASK_USER needs one question."
+        if normalize(question) in {normalize(q) for q in asked_questions(case)}:
+            return f"Question already asked or answered, do not repeat it: {question}"
+    if kind == "RETRIEVE_PUBLIC_GUIDANCE":
+        url = action.get("source_url")
+        if url not in prompts.ALLOWED_SOURCES:
+            return f"URL is not on the allowed list: {url}"
+        if url in budget["urls"]:
+            return f"URL already used in this run: {url}"
+        if budget["retrievals"] >= MAX_RETRIEVALS:
+            return "Retrieval budget is used up; choose another action."
+    return None
 
 
-# ---- Step 4: decide CONTINUE or STOP ----
-def judge_evidence(need, good_pages):
-    """Is the evidence sufficient, relevant and non-contradictory? (Gemini's opinion.)"""
-    # STUB: Checkpoint C asks Gemini and checks its answer is exactly CONTINUE or STOP.
-    return {"decision": "STOP", "reason": "stub: one good page counts as enough", "next": ""}
+# ---- One bounded run for the current revision ----
+def run_review(case, ask=ask_gemini, log=print):
+    """Review cycles until a valid action ends the run or the budget is reached."""
+    budget = budget_for(case)
+    if budget["outcome"] and budget["outcome"]["outcome"] != FAILED:
+        return budget["outcome"]  # this revision already finished; only a failed run may be retried
+    if budget["cycles"] >= MAX_CYCLES:
+        return finish(case, budget, UNRESOLVED, f"cycle budget of {MAX_CYCLES} reached")
+    notes = []
+    while budget["cycles"] < MAX_CYCLES:
+        budget["cycles"] += 1
+        ticket = case.start_review()
+        try:
+            reply = ask(prompts.review_input(case, asked_questions(case), notes),
+                        instructions=prompts.REVIEW_INSTRUCTIONS, json_mode=True)
+        except LLMError as error:
+            case.state, case.message = case_model.REVIEW_FAILED, f"Review failed: {error}"
+            return finish(case, budget, FAILED, str(error))
+        result = case.finish_review(ticket, reply)
+        if result == "discarded":
+            return {"outcome": DISCARDED, "reason": "evidence changed while the review ran"}
+        if result == "failed":
+            return finish(case, budget, FAILED, case.message)  # no automatic retry
 
-
-def evaluate(need, evidence_so_far, iteration):
-    """Return exactly one decision: CONTINUE (with reason + next idea) or STOP (with reason)."""
-    good_pages = [e for e in evidence_so_far if e["status"] == "ok"]
-    if good_pages:
-        judgement = judge_evidence(need, good_pages)
-    else:
-        judgement = {"decision": "CONTINUE", "reason": "no page has loaded successfully yet",
-                     "next": "try a different page"}
-    # Code, not Gemini, enforces the limits.
-    pages_used = len([e for e in evidence_so_far if e["status"] != "skipped"])
-    if judgement["decision"] == "CONTINUE" and (iteration >= MAX_ITERATIONS or pages_used >= MAX_PAGES):
-        return {"decision": "STOP", "reason": f"limits reached ({judgement['reason']})", "next": ""}
-    return judgement
-
-
-# ---- Step 5: honest summary ----
-def draft_claims(need, evidence):
-    """Propose claims with quotes and sources, plus questions we could not answer."""
-    good_pages = [e for e in evidence if e["status"] == "ok"]
-    # STUB: Checkpoint C asks Gemini. Here: one real quote, one fake quote to show the code check.
-    claims = []
-    if good_pages:
-        page = good_pages[0]
-        claims.append({"claim": "STUB: the page describes itself", "quote": page["text"][:80],
-                       "source_url": page["url"]})
-        claims.append({"claim": "STUB: fake claim (should be demoted)", "quote": "this text is not on the page",
-                       "source_url": page["url"]})
-    return {"claims": claims, "unverified": []}
-
-
-def verify_claims(proposed, evidence):
-    """Keep a claim as verified ONLY if its quote is an exact substring of that page's text."""
-    pages = {e["url"]: e for e in evidence if e["status"] == "ok"}
-    verified, rejected = [], []
-    for item in proposed:
-        claim = str(item.get("claim", "")).strip()
-        quote = str(item.get("quote", ""))
-        page = pages.get(str(item.get("source_url", "")))
-        if not claim:
+        action = case.review["next_action"]
+        problem = check_action(case, budget, action)
+        log(f"Cycle {budget['cycles']}: model proposed {action['action']} ({action.get('reason', '')})"
+            + (f" -> rejected by code: {problem}" if problem else ""))
+        if problem:
+            notes.append(problem)
             continue
-        if page is None:
-            rejected.append(f"{claim} (not found: source page was not collected)")
-        elif not quote or len(quote) > MAX_QUOTE_CHARS:
-            rejected.append(f"{claim} (not found: quote missing or longer than {MAX_QUOTE_CHARS} characters)")
-        elif quote not in page["text"]:
-            rejected.append(f"{claim} (not found: quote is not on the page)")
+
+        kind = action["action"]
+        if kind == "ASK_USER":
+            case.asked_questions = getattr(case, "asked_questions", []) + [action["question"]]
+            return finish(case, budget, WAITING_FOR_ANSWER, action.get("reason", ""), question=action["question"])
+        if kind == "RETRIEVE_PUBLIC_GUIDANCE":
+            budget["urls"].append(action["source_url"])
+            return finish(case, budget, UNRESOLVED, "public guidance lookup not yet wired (checkpoint C3)",
+                          source_url=action["source_url"])
+        if kind == "READY_FOR_DRAFT":
+            return finish(case, budget, READY, action.get("reason", ""))
+        return finish(case, budget, UNRESOLVED, action.get("reason", ""))
+
+    return finish(case, budget, UNRESOLVED, f"cycle budget of {MAX_CYCLES} reached ({'; '.join(notes)})")
+
+
+# ---- Draft: only on the user's request, only after READY_FOR_DRAFT ----
+def generate_draft(case, ask=ask_gemini):
+    """Ask Gemini for a draft from the current checked review. Returns 'accepted', 'discarded' or 'failed'."""
+    ticket = case.start_draft()  # raises if the current review is not READY_FOR_DRAFT
+    try:
+        reply = ask(prompts.draft_input(case), instructions=prompts.DRAFT_INSTRUCTIONS, json_mode=True)
+    except LLMError as error:
+        case.state, case.message = case_model.DRAFT_FAILED, f"Draft failed: {error}"
+        return "failed"
+    result = case.finish_draft(ticket, reply)
+    if result == "accepted" and DRAFT_LABEL not in case.draft["draft_text"]:
+        case.draft["draft_text"] += "\n\n" + DRAFT_LABEL
+    return result
+
+
+# ---- Source click-through (addendum step 5) ----
+def source_panel(case, finding):
+    """For each cited source: the CURRENT document's title and the exact passage, or an error."""
+    panel = []
+    for source in finding.get("sources", []):
+        doc = case.document(source.get("source_id"))
+        if doc is None:
+            panel.append({"source_id": source.get("source_id"), "error": "source is no longer in the case"})
+        elif source.get("evidence_text") not in doc["text"]:
+            panel.append({"source_id": doc["id"], "title": doc["title"], "error": "passage not found in current text"})
         else:
-            verified.append({
-                "claim": claim,
-                "status": "verified",
-                "quote": quote,
-                "source_url": page["url"],
-                "screenshot_path": page["screenshot_path"],  # one screenshot per page, shared
-                "checked_at": page["checked_at"],
-            })
-    return verified, rejected
-
-
-def summarize(need, evidence, iterations, stop_reason):
-    """Build the final JSON. Only collected evidence counts; everything else is unverified."""
-    draft = draft_claims(need, evidence)
-    claims, rejected = verify_claims(draft["claims"], evidence)
-    unverified = list(draft["unverified"]) + rejected
-    for e in evidence:  # every page we could not use, with its reason
-        if e["status"] != "ok":
-            unverified.append(f"{e['url']} (blocked: {e['reason']})")
-    if not claims and "limits reached" in stop_reason:
-        unverified.append(f"{need['text']} (limits reached)")
-    return {
-        "need": need["text"],
-        "claims": claims,
-        "unverified": unverified,
-        "iterations": iterations,
-        "pages_visited": [e["url"] for e in evidence if e["status"] != "skipped"],
-    }
-
-
-# ---- The loop ----
-def run_pipeline(user_text):
-    """Run parse -> (plan -> browse -> evaluate) x N -> summarize, and return the result dict."""
-    need = parse_need(user_text)
-    evidence = []
-    iteration = 0
-    hint = ""
-    stop_reason = "not started"
-
-    while iteration < MAX_ITERATIONS:
-        iteration += 1
-        step = plan(need, evidence, hint)
-        if step is None:
-            stop_reason = "no new page left to try"
-            print(f"Iteration {iteration}: stopping because {stop_reason}.")
-            break
-
-        if is_simple_public_url(step["url"]):
-            record = browse_step(step)
-        else:  # not visited at all, just noted
-            record = {"url": step["url"], "status": "skipped", "reason": "not a simple public http(s) URL",
-                      "text": "", "screenshot_path": "", "checked_at": now_utc()}
-        evidence.append(record)
-
-        decision = evaluate(need, evidence, iteration)
-        if decision["decision"] == "STOP":
-            stop_reason = decision["reason"]
-            print(f"Iteration {iteration}: checked {step['url']}; stopping because {stop_reason}.")
-            break
-        hint = decision["next"]
-        print(f"Iteration {iteration}: checked {step['url']}; evidence insufficient because "
-              f"{decision['reason']}, next I will {hint}.")
-
-    return summarize(need, evidence, iteration, stop_reason)
+            panel.append({"source_id": doc["id"], "title": doc["title"], "passage": source["evidence_text"]})
+    return panel

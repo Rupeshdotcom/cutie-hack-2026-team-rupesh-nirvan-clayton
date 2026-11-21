@@ -15,6 +15,7 @@ load_dotenv()
 # The Google Gen AI SDK (package "google-genai"). Friendly message if it is not installed.
 try:
     from google import genai
+    from google.genai import types
 except ImportError:
     sys.exit("The google-genai package is missing. Run: pip install -r requirements.txt")
 
@@ -33,14 +34,23 @@ def check_gemini_setup():
 
 
 # ---- The one function the rest of the code uses ----
-def ask_gemini(prompt):
-    """Send one prompt to Gemini and return the reply text."""
+def ask_gemini(prompt, instructions=None, json_mode=False):
+    """Send one prompt to Gemini and return the reply text.
+
+    instructions: the task rules, sent separately from the data (system instruction).
+    json_mode: ask Gemini to reply with JSON only (code still validates it).
+    """
     check_gemini_setup()
     client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+    config = types.GenerateContentConfig(
+        system_instruction=instructions,
+        response_mime_type="application/json" if json_mode else None,
+    )
     try:
         response = client.models.generate_content(
             model=os.getenv("GEMINI_MODEL"),
             contents=prompt,
+            config=config,
         )
     except Exception as error:  # quota (429), bad key, bad model name, network...
         raise LLMError(f"Gemini call failed: {type(error).__name__}: {error}") from None

@@ -110,7 +110,9 @@ class Case:
 
     # ---- Buttons the UI may enable ----
     def can_generate_draft(self):
-        return self.state in (REVIEW_READY, DRAFT_FAILED, DRAFT_READY) and self.review is not None
+        """Only after a current review whose accepted next action is READY_FOR_DRAFT."""
+        return (self.state in (REVIEW_READY, DRAFT_FAILED, DRAFT_READY) and self.review is not None
+                and self.review["next_action"].get("action") == "READY_FOR_DRAFT")
 
     def can_copy_draft(self):
         return self.state == DRAFT_READY and self.draft is not None
