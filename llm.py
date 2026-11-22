@@ -43,7 +43,8 @@ def ask_gemini(prompt, instructions=None, json_mode=False):
     json_mode: ask Gemini to reply with JSON only (code still validates it).
     """
     check_gemini_setup()
-    client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"))
+    # 60-second limit (in milliseconds), so a dead network fails instead of hanging.
+    client = genai.Client(api_key=os.getenv("GEMINI_API_KEY"), http_options=types.HttpOptions(timeout=60_000))
     config = types.GenerateContentConfig(
         system_instruction=instructions,
         response_mime_type="application/json" if json_mode else None,

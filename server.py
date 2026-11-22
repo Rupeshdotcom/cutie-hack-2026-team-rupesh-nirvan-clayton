@@ -10,8 +10,9 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import agent
+import case_model
 from case_model import FIXTURES, load_fixture_case
-from llm import ask_gemini
+from llm import ask_gemini, check_gemini_setup
 from public_sources import retrieve_public_page
 
 ROOT = Path(__file__).resolve().parent
@@ -22,6 +23,7 @@ EDITABLE_KINDS = ("denial", "policy_excerpt", "case_fact", "user_report")
 # Swappable so tests can use fake replies instead of real API calls.
 ASK = ask_gemini
 RETRIEVE = retrieve_public_page
+SETUP_CHECK = check_gemini_setup
 
 case = None  # the one case on screen
 
@@ -97,6 +99,12 @@ def edit(body):
 
 
 def review(_body):
+    # Preflight: a missing key or model fails right away instead of killing the request thread.
+    try:
+        SETUP_CHECK()
+    except SystemExit as missing:
+        case.state, case.message = case_model.REVIEW_FAILED, f"Review failed: {missing}"
+        return state()
     agent.run_review(case, ask=ASK, retrieve=RETRIEVE, log=lambda _: None)
     return state()
 

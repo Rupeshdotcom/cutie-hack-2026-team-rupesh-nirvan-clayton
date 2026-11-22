@@ -8,6 +8,7 @@ import os
 import sys
 import threading
 import unittest
+from unittest import mock
 import urllib.error
 import urllib.request
 from http.server import ThreadingHTTPServer
@@ -45,6 +46,7 @@ class Website(unittest.TestCase):
         self.retrieve_result = PAGE
         server.ASK = lambda *a, **k: self.replies.pop(0)
         server.RETRIEVE = lambda url: self.retrieve_result
+        server.SETUP_CHECK = lambda: None
 
     def get(self, path):
         with urllib.request.urlopen(self.base + path) as res:
@@ -117,6 +119,19 @@ class Website(unittest.TestCase):
         self.assertTrue(s["draft"]["limited"])
         self.assertIn("[PLACEHOLDER:", s["draft"]["text"])
         self.assertTrue(s["draft"]["text"].endswith("Draft for review. Not submitted."))
+
+    def test_missing_gemini_config_fails_without_model_call(self):
+        self.load()
+        calls = []
+        server.ASK = lambda *a, **k: calls.append(a)
+        server.SETUP_CHECK = server.check_gemini_setup
+        with mock.patch.dict(os.environ, {"GEMINI_API_KEY": "", "GEMINI_MODEL": ""}):
+            status, s = self.post("/api/review", {})
+        self.assertEqual(status, 200)
+        self.assertEqual(s["state"], "review_failed")
+        self.assertTrue(s["message"].startswith("Review failed: Missing GEMINI_API_KEY"))
+        self.assertEqual(calls, [])
+        self.assertIsNone(s["review"])
 
     def test_disabled_draft_is_refused(self):
         self.load()
