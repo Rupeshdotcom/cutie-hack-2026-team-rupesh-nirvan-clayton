@@ -68,6 +68,12 @@ def check_action(case, budget, action):
             return "ASK_USER needs one question."
         if question.count("?") > 1:
             return f"Ask for exactly one fact in one question, not several: {question}"
+        tokens = normalize(question).split()
+        qwords = {"what", "when", "where", "who", "why", "how", "did", "does", "was",
+                "were", "is", "are", "can", "could", "which"}
+        if sum(t in qwords for t in tokens) >= 2 and (" and " in normalize(question) or "," in question):
+            return f"Ask for exactly one fact in one question, not several: {question}"
+
         if normalize(question) in {normalize(q) for q in asked_questions(case)}:
             return f"Question already asked or answered, do not repeat it: {question}"
     if kind == "RETRIEVE_PUBLIC_GUIDANCE":
