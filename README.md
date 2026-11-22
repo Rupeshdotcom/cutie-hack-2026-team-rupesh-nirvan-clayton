@@ -113,7 +113,7 @@ Also not yet verified, for the same reason:
 - `tests/`: answer key, offline tests and real-model runner
 
 ## AI tools used
-- **Claude Code** (Anthropic, Claude Opus 5.5) was the coding assistant. It wrote some of the code, tests and this README under the team's direction.The team set the requirements, reviewed and tested each checkpoint, and hand-wrote the draft-validation guard in evidence_checks.py, which rejects any draft that lists no assertions.
+- **Claude Code** (Anthropic, Claude Opus 5.5) was the coding assistant. It revised and debugged the code(some writing as well), tests and this README under the team's direction.The team set the requirements, reviewed and tested each checkpoint, and hand-wrote the draft-validation guard in evidence_checks.py, which rejects any draft that lists no assertions.
 
 - Muse — planning, prompt design, and review.
 - **Google Gemini** (via `google-genai`) is the **runtime model**. The app calls it for the evidence review and the drafts.
