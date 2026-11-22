@@ -57,7 +57,9 @@ def check_finding(finding, documents):
     if not isinstance(sources, list):
         raise ModelOutputError(f"finding {finding['id']} sources is not a list")
     problems = [p for p in (source_problem(s, documents) for s in sources) if p]
-    good = len(sources) - len(problems)
+    valid = [s for s in sources if isinstance(s, dict) and source_problem(s, documents) is None]
+    good = len({s.get("source_id") for s in valid})
+
     checked = dict(finding, sources=sources, source_check_problems=problems)
     needed = {"supported": 1, "contradictory": 2}.get(finding["status"], 0)
     if needed and (problems or good < needed):
