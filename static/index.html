@@ -3,9 +3,9 @@
 <head>
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>Denial Draft Helper (fictional demo)</title>
+<title>Denial Draft Helper</title>
 <style>
-:root { --ink:#142d43; --blue:#174fb5; --line:#c6d2dc; --muted:#526577; --paper:#f3f6f8; --white:#fff; }
+:root { --ink:#142d43; --blue:#195add; --line:#c6d2dc; --muted:#526577; --paper:#f2f6ff; --white:#fff; }
 * { box-sizing:border-box; }
 html { scroll-behavior:smooth; }
 body { margin:0; color:var(--ink); background:var(--paper); font-family:Arial, Helvetica, sans-serif; font-size:16px; line-height:1.55; }
@@ -17,7 +17,7 @@ button:active:not(:disabled) { transform:translateY(1px); }
 button:disabled { background:#dbe2e9; color:#657685; cursor:not-allowed; }
 button:focus-visible,select:focus-visible,textarea:focus-visible,input:focus-visible,a:focus-visible { outline:3px solid #df9f32; outline-offset:4px; }
 a { color:inherit; text-underline-offset:5px; }
-.topbar { background:var(--ink); color:#fff; padding:17px max(24px,calc((100vw - 1360px)/2)); display:flex; align-items:center; justify-content:space-between; gap:20px; }
+.topbar { background:#174db9; color:#fff; padding:17px max(24px,calc((100vw - 1360px)/2)); display:flex; align-items:center; justify-content:space-between; gap:20px; }
 .wordmark { display:flex; align-items:center; gap:12px; font-size:18px; font-weight:600; }
 .wordmark svg { width:27px; height:30px; flex-shrink:0; }
 .topbar a { font-size:14px; }
@@ -27,14 +27,14 @@ h1 { font-family:Georgia, 'Times New Roman', serif; font-size:clamp(34px,3.8vw,5
 .intro p { margin:0; color:var(--muted); max-width:470px; font-size:17px; }
 .fictional { margin:0; padding:12px 0; border-top:1px solid var(--line); color:var(--muted); font-size:13px; }
 .fictional strong { color:var(--ink); }
-.preview-note { padding:12px 16px; margin:0 0 16px; border-left:3px solid var(--blue); background:#e5edf9; font-size:14px; }
+.preview-note { padding:12px 16px; margin:0 0 16px; border-left:3px solid var(--blue); background:#ddeaff; font-size:14px; }
 .casebar { display:flex; align-items:center; gap:24px; border-top:1px solid var(--ink); padding:24px 0 28px; }
 .casebar label { font-weight:600; white-space:nowrap; }
 .case-controls { display:flex; gap:10px; width:min(100%,650px); }
 select { border:1px solid #a7b8c6; border-radius:4px; background:#fff; padding:9px 35px 9px 12px; color:var(--ink); min-width:0; width:100%; }
 .case-controls button { flex-shrink:0; }
 .workspace { display:grid; grid-template-columns:minmax(0,0.85fr) minmax(0,1.15fr); align-items:start; background:var(--white); border-top:3px solid var(--ink); }
-.sources { min-width:0; padding:30px; background:#eaf0f5; border-right:1px solid var(--line); }
+.sources { min-width:0; padding:30px; background:#e6efff; border-right:1px solid var(--line); }
 .work { min-width:0; padding:30px 36px; }
 h2 { font-size:23px; line-height:1.2; letter-spacing:-.5px; margin:0 0 20px; font-weight:600; }
 h3 { font-size:18px; margin:28px 0 14px; }
@@ -84,14 +84,12 @@ footer { padding:24px 0 32px; color:var(--muted); font-size:13px; display:flex; 
 <a href="#workspace">Open the workspace</a>
 </header>
 <div class="page">
-<section class="intro"><h1>Make your case.<br>Keep the evidence.</h1><p>Review an insurance denial alongside its documents, then prepare a response you can check.</p></section>
-<p class="fictional"><strong>Fictional demo.</strong> All cases and documents are made up. No medical, legal or coverage advice. Nothing is sent or filed.</p>
-<p id="preview-note" class="preview-note hidden">Design preview only. Case review and drafting run in the local Python app.</p>
-<div class="casebar"><label for="case-picker">Choose a fictional case</label><div class="case-controls"><select id="case-picker" aria-label="Fictional case"></select><button id="load-btn">Load case</button></div></div>
+<section class="intro"><h1>Review your insurance denial</h1><p>Compare the documents and prepare a response draft.</p></section>
+<div class="casebar"><label for="case-picker">Choose a case</label><div class="case-controls"><select id="case-picker" aria-label="Case"></select><button id="load-btn">Load case</button></div></div>
 <main class="workspace" id="workspace">
 <aside class="sources" aria-label="Case evidence">
 <h2>Case documents</h2><p id="changed" class="changed hidden" role="status"></p>
-<div id="documents"><p class="empty">Load a fictional case to read the denial, policy and supporting records.</p></div>
+<div id="documents"><p class="empty">No documents loaded.</p></div>
 <section class="guidance-section"><h2>Public guidance</h2><div id="guidance"><p class="note">No public guidance retrieved for this review.</p></div></section>
 </aside>
 <div class="work">
@@ -100,11 +98,11 @@ footer { padding:24px 0 32px; color:var(--muted); font-size:13px; display:flex; 
 <h3>Findings</h3><p id="denial-reason"></p><table id="findings" aria-label="Evidence findings"></table><ul id="limitations" class="note"></ul>
 </section>
 <section class="question-section"><h3>What's missing?</h3><div id="question-box"><p class="note">No open question.</p></div></section>
-<section class="draft-section"><h2>Response draft</h2><p class="banner">For your review. Not submitted.</p>
+<section class="draft-section"><h2>Response draft</h2>
 <div class="draft-controls"><button id="draft-btn" disabled>Generate draft</button><button id="limited-btn" class="hidden">Request limited draft</button><button id="copy-btn" disabled>Copy</button></div>
 <textarea id="draft-text" rows="14" readonly aria-label="Response draft" placeholder="Your draft will appear here after the evidence review."></textarea>
 </section></div></main>
-<footer><span>Built for Cutie Hack 2026</span><span>Check every statement against its source before use.</span></footer>
+
 </div>
 <script>
 // ---- Talking to the Python server (keys stay there) ----
@@ -220,12 +218,10 @@ document.getElementById("copy-btn").addEventListener("click", () =>
 
 (async () => {
   if (location.hostname === "denial-draft-helper-preview.pages.dev") {
-    document.getElementById("preview-note").classList.remove("hidden");
     const option = el("option", "Local app required");
     document.getElementById("case-picker").append(option);
     document.getElementById("case-picker").disabled = true;
     document.getElementById("load-btn").disabled = true;
-    document.getElementById("status").textContent = "Backend unavailable in this design preview.";
     return;
   }
   const data = await call("/api/cases");
