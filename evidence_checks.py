@@ -106,6 +106,9 @@ def check_draft(data, review):
     """Reject a draft whose assertions cite anything but supported findings of this review."""
     if not isinstance(data.get("draft_text"), str) or not data["draft_text"].strip():
         raise ModelOutputError("the draft has no text")
+    if not data.get("assertions"):
+        raise ModelOutputError("the draft lists no assertions, so its claims cannot be checked")
+
     supported = {f["id"] for f in review["findings"] if f["status"] == "supported"}
     for assertion in data.get("assertions") or []:
         cited = assertion.get("finding_ids") or []
