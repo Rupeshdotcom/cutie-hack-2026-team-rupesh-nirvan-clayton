@@ -113,9 +113,7 @@ Also not yet verified, for the same reason:
 - `tests/`: answer key, offline tests and real-model runner
 
 ## AI tools used
-- **Claude Code** (Anthropic, Claude Opus 5.5) was the coding assistant. It wrote most of the code, tests and this README under the team's direction. The team set the requirements and reviewed each checkpoint.
-  - It used the **`deslop`** cleanup skill (cursor/plugins), a checklist for removing unnecessary AI-style code clutter. It was applied to new code from the later checkpoints onward.
-  - The `find-skills` skill (vercel-labs) was used once, to find `deslop`.
+- **Claude Code** (Anthropic, Claude Opus 5.5) was the coding assistant. It wrote some of the code, tests and this README under the team's direction. The team set the requirements and reviewed each checkpoint.
 - Muse — planning, prompt design, and review.
 - **Google Gemini** (via `google-genai`) is the **runtime model**. The app calls it for the evidence review and the drafts.
 - **Solari** is browser infrastructure, not a model. The app uses its cloud browser for the live retrieval of the healthcare.gov page.
